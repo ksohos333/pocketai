@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PocketAI</string>
+    <string name="web_search">Web</string>
+    <string name="start_server">START</string>
+    <string name="send">Ask</string>
+    <string name="ask_anything">Ask anything…</string>
+    <string name="clear_chat">Clear chat</string>
+</resources>

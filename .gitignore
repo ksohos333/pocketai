@@ -1,0 +1,19 @@
+# Gradle / build output
+build/
+.gradle/
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Native engine binaries (built via scripts/embedded_pipeline.sh)
+app/src/embedded/jniLibs/**/*.so
+
+# Signing
+*.jks
+*.keystore
+
+# OS noise
+.DS_Store
