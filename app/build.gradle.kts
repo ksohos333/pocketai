@@ -11,8 +11,8 @@ android {
         applicationId = "com.bpoppa.pocketai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.2"
     }
 
     flavorDimensions += "engine"
@@ -58,4 +58,5 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jsoup:jsoup:1.18.1")
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
 }

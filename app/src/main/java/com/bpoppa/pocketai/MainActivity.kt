@@ -13,7 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.appbar.MaterialToolbar
-import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
@@ -30,7 +30,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapter: ChatAdapter
     private lateinit var input: TextInputEditText
     private lateinit var searchSwitch: MaterialSwitch
-    private lateinit var serverButton: ExtendedFloatingActionButton
     private lateinit var statusView: TextView
 
     private val history = mutableListOf<ChatMsg>()
@@ -40,19 +39,49 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        server = createServerManager(this)
-        llama = LlamaClient(server.port)
+        server = ServerHolder.get(this)
+        llama = LlamaClient(server.port, server.apiKey)
         store = ChatStore(this)
+
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
 
         val toolbar = findViewById<MaterialToolbar>(R.id.toolbar)
         toolbar.title = "PocketAI (${server.flavorName})"
         toolbar.setOnMenuItemClickListener { item ->
-            if (item.itemId == R.id.action_clear) {
-                store.clear()
-                history.clear()
-                adapter.submit(emptyList())
-                true
-            } else false
+            when (item.itemId) {
+                R.id.action_clear -> {
+                    store.clear()
+                    history.clear()
+                    adapter.submit(emptyList())
+                    true
+                }
+                R.id.action_server -> {
+                    onServerButton()
+                    true
+                }
+                R.id.action_token -> {
+                    showToken()
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // Edge-to-edge (targetSdk 35): keep content out of the system bars.
+        val root = findViewById<View>(R.id.root)
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                androidx.core.view.WindowInsetsCompat.Type.displayCutout() or
+                androidx.core.view.WindowInsetsCompat.Type.ime()
+            )
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            androidx.core.view.WindowInsetsCompat.CONSUMED
         }
 
         recycler = findViewById(R.id.recycler)
@@ -62,34 +91,46 @@ class MainActivity : AppCompatActivity() {
 
         input = findViewById(R.id.input)
         searchSwitch = findViewById(R.id.search_switch)
-        serverButton = findViewById(R.id.server_button)
         statusView = findViewById(R.id.status)
         statusView.movementMethod = ScrollingMovementMethod()
+        statusView.setOnClickListener { onServerButton() }
 
         history.addAll(store.load())
         adapter.submit(history.map { UiMsg(it.role, it.content) })
-
-        serverButton.setOnClickListener { onServerButton() }
-        findViewById<ExtendedFloatingActionButton>(R.id.send_button).setOnClickListener { onSend() }
+        findViewById<FloatingActionButton>(R.id.send_button).setOnClickListener { onSend() }
 
         refreshStatus()
     }
 
     private fun onServerButton() {
-        if (llama.health()) {
-            setStatus("server already running on :${server.port}")
-            return
-        }
-        setStatus("starting ${server.flavorName} server…")
+        setStatus("checking server…")
         lifecycleScope.launch {
+            val running = withContext(Dispatchers.IO) { llama.health() }
+            if (running) {
+                setStatus("server already running on :${server.port}")
+                return@launch
+            }
+            setStatus("starting ${server.flavorName} server…")
             val ok = withContext(Dispatchers.IO) { startServerWithRetry() }
-            if (ok) setStatus("server up on :${server.port} — ${server.modelStatus()}")
-            else setStatus("server did not come up. ${server.modelStatus()}")
+            if (ok) {
+                setStatus("server up on :${server.port} — ${server.modelStatus()}")
+                androidx.core.content.ContextCompat.startForegroundService(
+                    this@MainActivity,
+                    android.content.Intent(this@MainActivity, PocketAIService::class.java)
+                )
+            } else {
+                setStatus("server did not come up. ${server.modelStatus()}")
+            }
         }
     }
 
     private fun startServerWithRetry(): Boolean {
-        server.ensureStarted { runOnUiThread { setStatus(it) } }
+        try {
+            server.ensureStarted { runOnUiThread { setStatus(it) } }
+        } catch (e: Exception) {
+            runOnUiThread { setStatus("server start failed: ${e.message}") }
+            return false
+        }
         repeat (20) {
             if (llama.health()) return true
             Thread.sleep(1000)
@@ -101,20 +142,22 @@ class MainActivity : AppCompatActivity() {
         if (busy) return
         val text = input.text?.toString()?.trim() ?: ""
         if (text.isEmpty()) return
-        if (!llama.health()) {
-            Toast.makeText(this, "Start the server first", Toast.LENGTH_SHORT).show()
-            onServerButton()
-            return
-        }
-        input.setText("")
-        busy = true
-
-        history.add(ChatMsg("user", text))
-        adapter.submit(history.map { UiMsg(it.role, it.content) })
-        store.append(ChatMsg("user", text))
-        setStatus("thinking…")
-
+        setStatus("checking server…")
         lifecycleScope.launch {
+            val up = withContext(Dispatchers.IO) { llama.health() }
+            if (!up) {
+                Toast.makeText(this@MainActivity, "Start the server first", Toast.LENGTH_SHORT).show()
+                onServerButton()
+                return@launch
+            }
+            input.setText("")
+            busy = true
+
+            history.add(ChatMsg("user", text))
+            adapter.submit(history.map { UiMsg(it.role, it.content) })
+            store.append(ChatMsg("user", text))
+            setStatus("thinking…")
+
             val answer = withContext(Dispatchers.IO) {
                 try {
                     val system = buildString {
@@ -158,9 +201,19 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread { statusView.text = s }
     }
 
+    private fun showToken() {
+        val cm = getSystemService(android.content.ClipboardManager::class.java)
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("PocketAI token", server.apiKey))
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Access token")
+            .setMessage("${server.apiKey}\n\n(copied to clipboard — paste it into the PocketAI Companion extension options)")
+            .setPositiveButton("OK", null)
+            .show()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
-        if (isFinishing) server.stop()
+        if (isFinishing && !PocketAIService.running) server.stop()
     }
 }
 

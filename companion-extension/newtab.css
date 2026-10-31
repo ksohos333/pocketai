@@ -1,0 +1,15 @@
+body{font-family:system-ui,sans-serif;background:#101418;color:#e8eaed;margin:0}
+.wrap{max-width:720px;margin:0 auto;padding:32px 20px}
+.head{display:flex;align-items:center;gap:10px;margin-bottom:20px}
+.brand{font-size:28px;font-weight:600;color:#9ab0ff}
+.badge{font-size:12px;color:#9ab0ff;background:#1c2440;border-radius:12px;padding:4px 12px}
+.badge.web{color:#ffcf7a;background:#40311c}
+.gear{margin-left:auto;color:#5f6b7a;text-decoration:none;font-size:20px}
+#q{width:100%;box-sizing:border-box;font-size:18px;padding:14px 16px;border-radius:12px;
+   border:1px solid #2a3244;background:#161b22;color:#e8eaed;outline:none}
+#q:focus{border-color:#9ab0ff}
+.webtoggle{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:14px;color:#a8b3c1}
+#status{margin-top:18px;font-size:14px;color:#7a8697;min-height:20px}
+#answer{margin-top:8px;font-size:17px;line-height:1.6;white-space:pre-wrap;word-wrap:break-word}
+.foot{margin-top:36px;font-size:12px;color:#5f6b7a}
+a{color:#9ab0ff}

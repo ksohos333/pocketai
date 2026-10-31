@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PocketAI</title>
+  <link rel="stylesheet" href="newtab.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <span class="brand">PocketAI</span>
+      <span class="badge" id="privacyBadge">on-device</span>
+      <a href="options.html" class="gear" title="Settings">&#9881;</a>
+    </div>
+    <form id="f">
+      <input id="q" type="text" placeholder="Ask anything… (stays on this phone)" autocomplete="off" autofocus>
+      <label class="webtoggle"><input type="checkbox" id="web"> web search</label>
+    </form>
+    <div id="status"></div>
+    <div id="answer"></div>
+    <div class="foot">local inference &#183; no telemetry &#183; PocketAI app must be running</div>
+  </div>
+  <script src="newtab.js"></script>
+</body>
+</html>

@@ -15,6 +15,8 @@ import java.util.concurrent.TimeUnit
 class EmbeddedServerManager(private val ctx: Context) : ServerManager {
     override val port = 8181
     override val flavorName = "embedded"
+    override val apiKey: String =
+        java.util.UUID.randomUUID().toString().replace("-", "")
 
     private val modelUrl =
         "https://huggingface.co/bartowski/mlabonne_gemma-3-4b-it-abliterated-GGUF/resolve/main/mlabonne_gemma-3-4b-it-abliterated-Q4_K_M.gguf"
@@ -22,9 +24,20 @@ class EmbeddedServerManager(private val ctx: Context) : ServerManager {
         get() = File(ctx.filesDir, "model.gguf")
 
     private var proc: Process? = null
+    private var gateway: AnswerGateway? = null
+
+    private fun ensureGateway() {
+        if (gateway != null) return
+        gateway = AnswerGateway(8182, LlamaClient(port, apiKey), onWake = { ensureStarted({}) }, apiToken = apiKey)
+        gateway?.start()
+        android.util.Log.d("PocketAI", "answer gateway on 127.0.0.1:8182 (token $apiKey)")
+    }
 
     override fun ensureStarted(onLog: (String) -> Unit) {
-        if (proc != null && proc!!.isAlive) return
+        if (proc != null && proc!!.isAlive) {
+            ensureGateway()
+            return
+        }
         if (!modelFile.exists() || modelFile.length() < 1_000_000_000L) {
             onLog("no model yet — downloading (~2.5 GB, Wi-Fi only run)…")
             downloadModel(onLog)
@@ -39,7 +52,8 @@ class EmbeddedServerManager(private val ctx: Context) : ServerManager {
             bin.absolutePath,
             "-m", modelFile.absolutePath,
             "--host", "127.0.0.1", "--port", port.toString(),
-            "-c", "4096", "-t", "4", "--no-webui"
+            "-c", "4096", "-t", "4", "--no-webui",
+            "--api-key", apiKey
         )
             .redirectErrorStream(true)
             .start()
@@ -49,6 +63,7 @@ class EmbeddedServerManager(private val ctx: Context) : ServerManager {
                 proc?.inputStream?.bufferedReader()?.forEachLine { }
             } catch (_: Exception) {}
         }.start()
+        ensureGateway()
     }
 
     private fun downloadModel(onLog: (String) -> Unit) {
@@ -87,6 +102,8 @@ class EmbeddedServerManager(private val ctx: Context) : ServerManager {
     override fun stop() {
         proc?.destroy()
         proc = null
+        gateway?.stop()
+        gateway = null
     }
 
     override fun isModelReady() = modelFile.exists() && modelFile.length() > 1_000_000_000L

@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "PocketAI Companion",
+  "version": "0.1",
+  "description": "Private on-device AI answers on your new tab. Queries never leave the phone unless web search is enabled.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1:8182/*"],
+  "options_ui": { "page": "options.html" },
+  "chrome_url_overrides": { "newtab": "newtab.html" }
+}
