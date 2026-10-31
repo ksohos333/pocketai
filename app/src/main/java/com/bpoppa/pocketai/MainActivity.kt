@@ -25,6 +25,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var server: ServerManager
     private lateinit var llama: LlamaClient
     private lateinit var store: ChatStore
+    private lateinit var prefs: android.content.SharedPreferences
 
     private lateinit var recycler: RecyclerView
     private lateinit var adapter: ChatAdapter
@@ -34,6 +35,17 @@ class MainActivity : AppCompatActivity() {
 
     private val history = mutableListOf<ChatMsg>()
     private var busy = false
+    private var secureMode = false
+
+    companion object {
+        const val DEFAULT_SYSTEM_PROMPT =
+            "You are PocketAI, a private assistant running fully offline on the user's phone. " +
+                "Be helpful, warm and concise."
+    }
+
+    private fun systemPrompt(): String = prefs.getString("system_prompt", null) ?: DEFAULT_SYSTEM_PROMPT
+    private val historyOn: Boolean get() = prefs.getBoolean("history_on", true) && !secureMode
+    private val ragOn: Boolean get() = prefs.getBoolean("rag_on", false) && historyOn
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,6 +54,7 @@ class MainActivity : AppCompatActivity() {
         server = ServerHolder.get(this)
         llama = LlamaClient(server.port, server.apiKey)
         store = ChatStore(this)
+        prefs = getSharedPreferences("pocketai", MODE_PRIVATE)
 
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
@@ -55,9 +68,34 @@ class MainActivity : AppCompatActivity() {
         toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.action_clear -> {
-                    store.clear()
+                    confirmDeleteChat()
+                    true
+                }
+                R.id.action_history -> {
+                    prefs.edit().putBoolean("history_on", !item.isChecked).apply()
+                    item.isChecked = !item.isChecked
                     history.clear()
-                    adapter.submit(emptyList())
+                    if (historyOn) {
+                        history.addAll(store.load())
+                        setStatus("chat history: saved")
+                    } else {
+                        setStatus("chat history: not saved (this session only)")
+                    }
+                    adapter.submit(history.map { UiMsg(it.role, it.content) })
+                    true
+                }
+                R.id.action_rag -> {
+                    prefs.edit().putBoolean("rag_on", !item.isChecked).apply()
+                    item.isChecked = !item.isChecked
+                    setStatus(if (item.isChecked) "RAG memory on (needs saved history)" else "RAG memory off")
+                    true
+                }
+                R.id.action_secure -> {
+                    toggleSecure(item)
+                    true
+                }
+                R.id.action_prompt -> {
+                    editSystemPrompt()
                     true
                 }
                 R.id.action_server -> {
@@ -95,8 +133,10 @@ class MainActivity : AppCompatActivity() {
         statusView.movementMethod = ScrollingMovementMethod()
         statusView.setOnClickListener { onServerButton() }
 
-        history.addAll(store.load())
-        adapter.submit(history.map { UiMsg(it.role, it.content) })
+        if (historyOn) {
+            history.addAll(store.load())
+            adapter.submit(history.map { UiMsg(it.role, it.content) })
+        }
         findViewById<FloatingActionButton>(R.id.send_button).setOnClickListener { onSend() }
 
         refreshStatus()
@@ -155,14 +195,22 @@ class MainActivity : AppCompatActivity() {
 
             history.add(ChatMsg("user", text))
             adapter.submit(history.map { UiMsg(it.role, it.content) })
-            store.append(ChatMsg("user", text))
+            if (historyOn) store.append(ChatMsg("user", text))
             setStatus("thinking…")
 
             val answer = withContext(Dispatchers.IO) {
                 try {
                     val system = buildString {
-                        append("You are PocketAI, a private assistant running fully offline on the user's phone. ")
-                        append("Be helpful, warm and concise. ")
+                        append(systemPrompt())
+                        if (ragOn) {
+                            val mem = store.search(text)
+                            if (mem.isNotEmpty()) {
+                                append("\n\nRelevant snippets from the user's past chats with you (memory):\n")
+                                mem.takeLast(4).forEach { m ->
+                                    append("- ${m.role}: ${m.content.take(300)}\n")
+                                }
+                            }
+                        }
                         if (searchSwitch.isChecked) {
                             setStatus("searching the web…")
                             val results = SearchHelper.search(text)
@@ -180,7 +228,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             history.add(ChatMsg("assistant", answer))
-            store.append(ChatMsg("assistant", answer))
+            if (historyOn) store.append(ChatMsg("assistant", answer))
             adapter.submit(history.map { UiMsg(it.role, it.content) })
             recycler.scrollToPosition(history.size - 1)
             setStatus("done")
@@ -211,8 +259,74 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun confirmDeleteChat() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Delete chat history?")
+            .setMessage("The stored chat file will be securely overwritten and removed from this phone. This cannot be undone.")
+            .setPositiveButton("Delete") { _, _ ->
+                store.secureWipe()
+                history.clear()
+                adapter.submit(emptyList())
+                setStatus("chat history securely wiped")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun toggleSecure(item: android.view.MenuItem) {
+        if (!item.isChecked) {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Enable secure chat?")
+                .setMessage("Stored chat history is wiped now, this session is never saved, and the chat file is wiped again when you leave the app.")
+                .setPositiveButton("Enable") { _, _ ->
+                    secureMode = true
+                    item.isChecked = true
+                    store.secureWipe()
+                    history.clear()
+                    adapter.submit(emptyList())
+                    setStatus("secure chat: nothing saved, wipes on exit")
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } else {
+            secureMode = false
+            item.isChecked = false
+            setStatus("secure chat off")
+        }
+    }
+
+    private fun editSystemPrompt() {
+        val box = android.widget.EditText(this).apply {
+            setText(systemPrompt())
+            minLines = 4
+            gravity = android.view.Gravity.TOP
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Custom system prompt")
+            .setMessage("Defines PocketAI's persona and rules for the app chat. Make it yours.")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                prefs.edit().putString("system_prompt", box.text.toString().trim()).apply()
+                Toast.makeText(this, "system prompt saved", Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton("Reset") { _, _ ->
+                prefs.edit().remove("system_prompt").apply()
+                Toast.makeText(this, "system prompt reset to default", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    override fun onPrepareOptionsMenu(menu: android.view.Menu): Boolean {
+        menu.findItem(R.id.action_history)?.isChecked = historyOn
+        menu.findItem(R.id.action_rag)?.isChecked = ragOn
+        menu.findItem(R.id.action_secure)?.isChecked = secureMode
+        return super.onPrepareOptionsMenu(menu)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        if (secureMode) store.secureWipe()
         if (isFinishing && !PocketAIService.running) server.stop()
     }
 }

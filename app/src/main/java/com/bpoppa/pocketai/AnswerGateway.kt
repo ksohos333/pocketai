@@ -67,12 +67,20 @@ class AnswerGateway(
         val files = HashMap<String, String>()
         session.parseBody(files)
         val body = files["postData"] ?: ""
-        val q = try {
-            org.json.JSONObject(body).optString("q", "").trim()
-        } catch (_: Exception) { "" }
-        val web = try {
-            org.json.JSONObject(body).optBoolean("web", false)
-        } catch (_: Exception) { false }
+        val j = try {
+            org.json.JSONObject(body)
+        } catch (_: Exception) {
+            return json(Response.Status.BAD_REQUEST, "{\"error\":\"bad json\"}")
+        }
+        val q = j.optString("q", "").trim()
+        val web = j.optBoolean("web", false)
+        val historyArr = j.optJSONArray("history")
+        val convo = (0 until (historyArr?.length() ?: 0)).mapNotNull { i ->
+            val o = historyArr?.optJSONObject(i) ?: return@mapNotNull null
+            val r = o.optString("role")
+            val c = o.optString("content")
+            if ((r == "user" || r == "assistant") && c.isNotEmpty()) ChatMsg(r, c.take(4000)) else null
+        }.takeLast(12)
         if (q.isEmpty()) return json(Response.Status.BAD_REQUEST, "{\"error\":\"empty query\"}")
         if (!llama.health()) {
             return json(Response.Status.SERVICE_UNAVAILABLE, "{\"error\":\"model not running - open the PocketAI app once\"}")
@@ -86,7 +94,11 @@ class AnswerGateway(
                 if (web) append("\n\n").append(SearchHelper.contextFor(q, SearchHelper.search(q)))
             }
             val answer = llama.complete(
-                listOf(ChatMsg("system", system), ChatMsg("user", q))
+                buildList {
+                    add(ChatMsg("system", system))
+                    addAll(convo)
+                    add(ChatMsg("user", q))
+                }
             )
             json(Response.Status.OK, org.json.JSONObject().put("answer", answer).toString())
         } catch (e: Exception) {

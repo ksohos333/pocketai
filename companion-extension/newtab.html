@@ -11,15 +11,17 @@
     <div class="head">
       <span class="brand">PocketAI</span>
       <span class="badge" id="privacyBadge">on-device</span>
+      <button id="del" class="delbtn" title="Delete chat">&#128465;</button>
       <a href="options.html" class="gear" title="Settings">&#9881;</a>
     </div>
     <form id="f">
       <input id="q" type="text" placeholder="Ask anything… (stays on this phone)" autocomplete="off" autofocus>
       <label class="webtoggle"><input type="checkbox" id="web"> web search</label>
+      <label class="webtoggle"><input type="checkbox" id="keep"> keep history on this device</label>
     </form>
     <div id="status"></div>
     <div id="answer"></div>
-    <div class="foot">local inference &#183; no telemetry &#183; PocketAI app must be running</div>
+    <div class="foot">local inference &#183; no telemetry &#183; nothing is stored unless &ldquo;keep history&rdquo; is on</div>
   </div>
   <script src="newtab.js"></script>
 </body>
