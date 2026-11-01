@@ -36,7 +36,6 @@ class MainActivity : AppCompatActivity() {
     private val history = mutableListOf<ChatMsg>()
     private var busy = false
     private var secureMode = false
-
     companion object {
         const val DEFAULT_SYSTEM_PROMPT =
             "You are PocketAI, a private assistant running fully offline on the user's phone. " +
@@ -55,6 +54,7 @@ class MainActivity : AppCompatActivity() {
         llama = LlamaClient(server.port, server.apiKey)
         store = ChatStore(this)
         prefs = getSharedPreferences("pocketai", MODE_PRIVATE)
+        secureMode = prefs.getBoolean("secure_on", false)
 
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
@@ -72,26 +72,21 @@ class MainActivity : AppCompatActivity() {
                     true
                 }
                 R.id.action_history -> {
-                    prefs.edit().putBoolean("history_on", !item.isChecked).apply()
-                    item.isChecked = !item.isChecked
-                    history.clear()
-                    if (historyOn) {
-                        history.addAll(store.load())
-                        setStatus("chat history: saved")
-                    } else {
-                        setStatus("chat history: not saved (this session only)")
-                    }
-                    adapter.submit(history.map { UiMsg(it.role, it.content) })
+                    setHistoryOn(!item.isChecked)
+                    item.isChecked = historyOn
                     true
                 }
                 R.id.action_rag -> {
-                    prefs.edit().putBoolean("rag_on", !item.isChecked).apply()
-                    item.isChecked = !item.isChecked
-                    setStatus(if (item.isChecked) "RAG memory on (needs saved history)" else "RAG memory off")
+                    setRagOn(!item.isChecked)
+                    item.isChecked = ragOn
                     true
                 }
                 R.id.action_secure -> {
                     toggleSecure(item)
+                    true
+                }
+                R.id.action_settings -> {
+                    showSettingsDialog()
                     true
                 }
                 R.id.action_prompt -> {
@@ -220,7 +215,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     val msgs = buildList {
                         add(ChatMsg("system", system))
-                        addAll(history.takeLast(12))
+                        addAll(history.takeLast(if (ragOn) 6 else 12))
                     }
                     llama.complete(msgs)
                 } catch (e: Exception) {
@@ -259,6 +254,84 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun setHistoryOn(enabled: Boolean) {
+        prefs.edit().putBoolean("history_on", enabled).apply()
+        history.clear()
+        if (enabled) history.addAll(store.load())
+        adapter.submit(history.map { UiMsg(it.role, it.content) })
+        setStatus(if (enabled) "chat history: saved" else "chat history: not saved (this session only)")
+    }
+
+    private fun setRagOn(enabled: Boolean) {
+        prefs.edit().putBoolean("rag_on", enabled).apply()
+        setStatus(if (enabled) "RAG memory on (uses past chats)" else "RAG memory off")
+    }
+
+    /** Interactive settings sheet: the toggles live here, not just in the overflow menu. */
+    private fun showSettingsDialog() {
+        val root = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(56, 8, 56, 0)
+        }
+        fun addSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit): androidx.appcompat.widget.SwitchCompat {
+            val sw = androidx.appcompat.widget.SwitchCompat(this).apply {
+                text = label
+                isChecked = checked
+                setPadding(0, 14, 0, 14)
+                setOnCheckedChangeListener { _, v -> onChange(v) }
+            }
+            root.addView(sw)
+            return sw
+        }
+
+        addSwitch("RAG memory (past chats)", ragOn) { v -> setRagOn(v) }
+        val secureHolder = arrayOfNulls<androidx.appcompat.widget.SwitchCompat>(1)
+        val historyHolder = arrayOfNulls<androidx.appcompat.widget.SwitchCompat>(1)
+        historyHolder[0] = addSwitch("Save chat history", historyOn) { v -> setHistoryOn(v) }
+        secureHolder[0] = addSwitch("Secure chat (wipe on exit)", secureMode) { v ->
+            if (v) {
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("Enable secure chat?")
+                    .setMessage("Stored history is wiped now, this session is never saved, and the file is wiped again when you leave the app.")
+                    .setPositiveButton("Enable") { _, _ ->
+                        secureMode = true
+                        prefs.edit().putBoolean("secure_on", true).apply()
+                        store.secureWipe()
+                        history.clear()
+                        adapter.submit(emptyList())
+                        historyHolder[0]?.isChecked = false
+                        setStatus("secure chat: nothing saved, wipes on exit")
+                    }
+                    .setNegativeButton("Cancel") { _, _ -> secureHolder[0]?.isChecked = false }
+                    .show()
+            } else {
+                secureMode = false
+                prefs.edit().putBoolean("secure_on", false).apply()
+                historyHolder[0]?.isChecked = prefs.getBoolean("history_on", true)
+                setStatus("secure chat off")
+            }
+        }
+        addSwitch("Web search (DuckDuckGo)", searchSwitch.isChecked) { v ->
+            searchSwitch.isChecked = v
+            setStatus(if (v) "web search: on (queries leave the device)" else "web search: off")
+        }
+
+        root.addView(android.widget.Button(this).apply {
+            text = "Custom system prompt…"
+            setOnClickListener { editSystemPrompt() }
+        })
+        root.addView(android.widget.Button(this).apply {
+            text = "Delete chat history…"
+            setOnClickListener { confirmDeleteChat() }
+        })
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle("PocketAI settings")
+            .setView(root)
+            .setPositiveButton("Done", null)
+            .show()
+    }
+
     private fun confirmDeleteChat() {
         android.app.AlertDialog.Builder(this)
             .setTitle("Delete chat history?")
@@ -281,6 +354,7 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton("Enable") { _, _ ->
                     secureMode = true
                     item.isChecked = true
+                    prefs.edit().putBoolean("secure_on", true).apply()
                     store.secureWipe()
                     history.clear()
                     adapter.submit(emptyList())
@@ -291,6 +365,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             secureMode = false
             item.isChecked = false
+            prefs.edit().putBoolean("secure_on", false).apply()
             setStatus("secure chat off")
         }
     }

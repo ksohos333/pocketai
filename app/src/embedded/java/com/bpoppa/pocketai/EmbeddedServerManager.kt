@@ -15,8 +15,14 @@ import java.util.concurrent.TimeUnit
 class EmbeddedServerManager(private val ctx: Context) : ServerManager {
     override val port = 8181
     override val flavorName = "embedded"
-    override val apiKey: String =
-        java.util.UUID.randomUUID().toString().replace("-", "")
+
+    /** Stable per-install key: a surviving server instance stays authorised after an app restart. */
+    override val apiKey: String = run {
+        val p = ctx.getSharedPreferences("pocketai", android.content.Context.MODE_PRIVATE)
+        p.getString("llama_api_key", null)
+            ?: java.util.UUID.randomUUID().toString().replace("-", "")
+                .also { p.edit().putString("llama_api_key", it).apply() }
+    }
 
     private val modelUrl =
         "https://huggingface.co/bartowski/mlabonne_gemma-3-4b-it-abliterated-GGUF/resolve/main/mlabonne_gemma-3-4b-it-abliterated-Q4_K_M.gguf"
@@ -47,6 +53,7 @@ class EmbeddedServerManager(private val ctx: Context) : ServerManager {
             onLog("bundled llama-server missing")
             return
         }
+        killStaleServers()
         onLog("launching bundled llama-server…")
         proc = ProcessBuilder(
             bin.absolutePath,
@@ -97,6 +104,21 @@ class EmbeddedServerManager(private val ctx: Context) : ServerManager {
             tmp.delete()
         }
         onLog("model downloaded (${modelFile.length() / 1048576} MB)")
+    }
+
+    private fun killStaleServers() {
+        try {
+            val procs = File("/proc").listFiles { f -> f.name.toIntOrNull() != null } ?: return
+            procs.forEach { p ->
+                val cmd = try {
+                    File(p, "cmdline").readBytes().toString(Charsets.ISO_8859_1)
+                } catch (_: Exception) { "" }
+                if (cmd.contains("libllama_server.so")) {
+                    ProcessBuilder("kill", p.name).start()
+                }
+            }
+        } catch (_: Exception) {
+        }
     }
 
     override fun stop() {
